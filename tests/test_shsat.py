@@ -2,9 +2,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pandas as pd
 from openpyxl import Workbook
 
-from src.shsat import DEVELOPER_FILE_MAP, load_all_feeder_workbooks, load_feeder_workbook
+from src.shsat import (
+    DEVELOPER_FILE_MAP,
+    build_sample_bundle,
+    construct_targets,
+    load_all_feeder_workbooks,
+    load_feeder_workbook,
+    split_data_by_year,
+)
 
 
 class LoadFeederWorkbookTests(unittest.TestCase):
@@ -204,6 +212,183 @@ class DevelopmentIngestionValidation(unittest.TestCase):
         referenced = set(df.source_file.unique())
         mapped = set(DEVELOPER_FILE_MAP.values())
         self.assertEqual(referenced, mapped, f"Unexpected files: {referenced - mapped}")
+
+
+class TargetConstructionTests(unittest.TestCase):
+    DATA_DIR: Path = Path(__file__).resolve().parent.parent / "data" / "raw" / "shsat"
+
+    def _skip_if_no_data(self) -> None:
+        first_file = self.DATA_DIR / DEVELOPER_FILE_MAP[2022]
+        if not first_file.exists():
+            self.skipTest("data/raw/shsat not available")
+
+    def test_construct_targets_binary_t1(self):
+        data = [
+            {"school_dbn": "01M001", "testers_raw": 100, "offers_raw": "0-5"},
+            {"school_dbn": "02X002", "testers_raw": "0-5", "offers_raw": 12},
+            {"school_dbn": "03Z003", "testers_raw": 0, "offers_raw": 0},
+        ]
+        df = pd.DataFrame(data)
+        result = construct_targets(df)
+
+        self.assertEqual(result.loc[0, "T1"], 1)
+        self.assertEqual(result.loc[1, "T1"], 0)
+        self.assertEqual(result.loc[2, "T1"], 0)
+
+    def test_construct_targets_binary_t2(self):
+        data = [
+            {"school_dbn": "01M001", "testers_raw": 100, "offers_raw": 12},
+            {"school_dbn": "02X002", "testers_raw": "0-5", "offers_raw": "0-5"},
+            {"school_dbn": "03Z003", "testers_raw": 10, "offers_raw": 5},
+        ]
+        df = pd.DataFrame(data)
+        result = construct_targets(df)
+
+        self.assertEqual(result.loc[0, "T2"], 1)
+        self.assertEqual(result.loc[1, "T2"], 0)
+        self.assertEqual(result.loc[2, "T2"], 0)
+
+    def test_construct_targets_preserves_original_columns(self):
+        data = [
+            {"school_dbn": "01M001", "testers_raw": 50, "offers_raw": 10},
+        ]
+        df = pd.DataFrame(data)
+        result = construct_targets(df)
+
+        self.assertIn("school_dbn", result.columns)
+        self.assertIn("testers_raw", result.columns)
+        self.assertIn("offers_raw", result.columns)
+        self.assertIn("T1", result.columns)
+        self.assertIn("T2", result.columns)
+
+    def test_construct_targets_from_real_data(self):
+        self._skip_if_no_data()
+        df = load_all_feeder_workbooks(self.DATA_DIR)
+        result = construct_targets(df)
+
+        self.assertEqual(len(result), EXPECTED_TOTAL_ROWS)
+        self.assertIn("T1", result.columns)
+        self.assertIn("T2", result.columns)
+        t1_counts = result["T1"].value_counts()
+        self.assertEqual(t1_counts.get(1, 0), 2225)
+        self.assertEqual(t1_counts.get(0, 0), 479)
+        t2_counts = result["T2"].value_counts()
+        self.assertEqual(t2_counts.get(1, 0), 458)
+        self.assertEqual(t2_counts.get(0, 0), 2246)
+
+
+class DataSplittingTests(unittest.TestCase):
+    DATA_DIR: Path = Path(__file__).resolve().parent.parent / "data" / "raw" / "shsat"
+
+    def _skip_if_no_data(self) -> None:
+        first_file = self.DATA_DIR / DEVELOPER_FILE_MAP[2022]
+        if not first_file.exists():
+            self.skipTest("data/raw/shsat not available")
+
+    def test_split_data_by_year_train_only(self):
+        data = [
+            {"school_dbn": "01M001", "admissions_year": 2022, "T1": 1},
+            {"school_dbn": "02X002", "admissions_year": 2023, "T1": 0},
+            {"school_dbn": "03Z003", "admissions_year": 2025, "T1": 1},
+            {"school_dbn": "04A004", "admissions_year": 2026, "T1": 0},
+        ]
+        df = pd.DataFrame(data)
+        splits = split_data_by_year(df, train_years=[2022, 2023, 2025])
+
+        self.assertEqual(len(splits["train"]), 3)
+        self.assertEqual(set(splits["train"]["admissions_year"].tolist()), {2022, 2023, 2025})
+
+    def test_split_data_by_year_with_eval(self):
+        data = [
+            {"school_dbn": "01M001", "admissions_year": 2022, "T1": 1},
+            {"school_dbn": "02X002", "admissions_year": 2024, "T1": 0},
+            {"school_dbn": "03Z003", "admissions_year": 2025, "T1": 1},
+            {"school_dbn": "04A004", "admissions_year": 2026, "T1": 0},
+        ]
+        df = pd.DataFrame(data)
+        splits = split_data_by_year(
+            df, train_years=[2022, 2024], eval_years=[2025]
+        )
+
+        self.assertEqual(len(splits["train"]), 2)
+        self.assertEqual(set(splits["train"]["admissions_year"].tolist()), {2022, 2024})
+        self.assertEqual(len(splits["eval"]), 1)
+        self.assertEqual(set(splits["eval"]["admissions_year"].tolist()), {2025})
+
+    def test_split_data_excludes_holdout(self):
+        data = [
+            {"school_dbn": "01M001", "admissions_year": 2022, "T1": 1},
+            {"school_dbn": "02X002", "admissions_year": 2026, "T1": 0},
+        ]
+        df = pd.DataFrame(data)
+        splits = split_data_by_year(df, train_years=[2022])
+
+        all_years = splits["train"]["admissions_year"].tolist()
+        self.assertNotIn(2026, all_years)
+
+    def test_split_data_by_year_real(self):
+        self._skip_if_no_data()
+        df = load_all_feeder_workbooks(self.DATA_DIR)
+        splits = split_data_by_year(df, train_years=[2022, 2023, 2024, 2025])
+
+        self.assertEqual(len(splits["train"]), 2704)
+        train_years = set(splits["train"]["admissions_year"].tolist())
+        self.assertEqual(train_years, {2022, 2023, 2024, 2025})
+
+
+class SampleBundleTests(unittest.TestCase):
+    DATA_DIR: Path = Path(__file__).resolve().parent.parent / "data" / "raw" / "shsat"
+
+    def _skip_if_no_data(self) -> None:
+        first_file = self.DATA_DIR / DEVELOPER_FILE_MAP[2022]
+        if not first_file.exists():
+            self.skipTest("data/raw/shsat not available")
+
+    def test_build_sample_bundle_excludes_2026(self):
+        self._skip_if_no_data()
+        df = load_all_feeder_workbooks(self.DATA_DIR)
+        df = construct_targets(df)
+        bundle = build_sample_bundle(df, self.DATA_DIR, exclude_2026=True)
+
+        self.assertFalse((bundle["admissions_year"] == 2026).any())
+
+    def test_build_sample_bundle_default_size(self):
+        self._skip_if_no_data()
+        df = load_all_feeder_workbooks(self.DATA_DIR)
+        df = construct_targets(df)
+        bundle = build_sample_bundle(df, self.DATA_DIR)
+
+        per_year = bundle.groupby("admissions_year").size()
+        for year in [2022, 2023, 2024, 2025]:
+            self.assertGreaterEqual(per_year.get(year, 0), 10)
+
+    def test_build_sample_bundle_respects_size_limit(self):
+        self._skip_if_no_data()
+        df = load_all_feeder_workbooks(self.DATA_DIR)
+        df = construct_targets(df)
+        bundle = build_sample_bundle(df, self.DATA_DIR, sample_size=50)
+
+        self.assertLessEqual(len(bundle), 50)
+
+    def test_build_sample_bundle_preserves_raw_and_target_columns(self):
+        self._skip_if_no_data()
+        df = load_all_feeder_workbooks(self.DATA_DIR)
+        df = construct_targets(df)
+        bundle = build_sample_bundle(df, self.DATA_DIR)
+
+        self.assertIn("T1", bundle.columns)
+        self.assertIn("T2", bundle.columns)
+        self.assertIn("testers_raw", bundle.columns)
+        self.assertIn("offers_raw", bundle.columns)
+
+    def test_build_sample_bundle_empty_on_2026_only(self):
+        data = [
+            {"school_dbn": "01M001", "admissions_year": 2026, "testers_raw": 50, "offers_raw": 10},
+        ]
+        df = pd.DataFrame(data)
+        bundle = build_sample_bundle(df, self.DATA_DIR, exclude_2026=True)
+
+        self.assertEqual(len(bundle), 0)
 
 
 if __name__ == "__main__":

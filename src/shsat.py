@@ -93,3 +93,100 @@ def load_all_feeder_workbooks(data_dir: str | Path) -> pd.DataFrame:
         frames.append(load_feeder_workbook(path, admissions_year=admissions_year))
 
     return pd.concat(frames, ignore_index=True).reset_index(drop=True)
+
+
+def construct_targets(df: pd.DataFrame) -> pd.DataFrame:
+    """Construct binary T1 (participation) and T2 (high-offer) targets.
+
+    T1 (participation): 1 if testers_raw is numeric and > 0, 0 if 0-5.
+    T2 (high-offer): 1 if offers_raw is numeric and >= 6, 0 if 0-5.
+
+    The 2026 holdout must not be included in any preprocessing or
+    feature-engineering decisions; targets are computed identically
+    for all years so that holdout evaluation remains valid.
+    """
+    out = df.copy()
+
+    def _testers_to_t1(val):
+        if isinstance(val, (int, float)):
+            return 1 if val > 0 else 0
+        return 0  # 0-5 suppressed
+
+    def _offers_to_t2(val):
+        if isinstance(val, (int, float)):
+            return 1 if val >= 6 else 0
+        return 0  # 0-5 suppressed
+
+    out["T1"] = out["testers_raw"].apply(_testers_to_t1)
+    out["T2"] = out["offers_raw"].apply(_offers_to_t2)
+
+    return out.reset_index(drop=True)
+
+
+def split_data_by_year(
+    df: pd.DataFrame, train_years: list[int], eval_years: list[int] | None = None
+) -> dict[str, pd.DataFrame]:
+    """Split feeder data by admission year using explicit year lists.
+
+    Parameters
+    ----------
+    train_years: Years used for training (e.g. [2022, 2023, 2024, 2025]).
+    eval_years:  Years used for evaluation (optional; if None no eval split).
+
+    Returns a dict with keys 'train' and optionally 'eval'.
+    The 2026 holdout is never included unless explicitly listed.
+    """
+    result: dict[str, pd.DataFrame] = {}
+
+    if train_years:
+        mask = df["admissions_year"].isin(train_years)
+        result["train"] = df.loc[mask].reset_index(drop=True)
+
+    if eval_years:
+        mask = df["admissions_year"].isin(eval_years)
+        result["eval"] = df.loc[mask].reset_index(drop=True)
+
+    return result
+
+
+def build_sample_bundle(
+    df: pd.DataFrame,
+    data_dir: str | Path,
+    sample_size: int | None = None,
+    exclude_2026: bool = True,
+) -> pd.DataFrame:
+    """Build a permitted sample bundle from feeder data for testing.
+
+    Selects a subset of schools from the development data (2022–2025),
+    retains source_year metadata and suppression strings, excludes 2026,
+    and returns a small DataFrame suitable for embedding in the repository.
+
+    If sample_size is None, returns a representative cross-section:
+    equal per-year row counts with balanced T1/T2 targets.
+
+    The returned bundle must never include 2026 data.
+    """
+    data_dir = Path(data_dir)
+    bundle_df = df.copy()
+
+    if exclude_2026:
+        bundle_df = bundle_df[bundle_df["admissions_year"] != 2026].copy()
+
+    if bundle_df.empty:
+        return bundle_df.reset_index(drop=True)
+
+    if sample_size is None:
+        per_year = max(10, len(bundle_df) // (4 * 10))
+        sampled = []
+        for year, group in bundle_df.groupby("admissions_year", sort=False):
+            sample_size_year = min(per_year, len(group))
+            sampled.append(
+                group.sample(sample_size_year, random_state=42 + year).reset_index(drop=True)
+            )
+        bundle_df = pd.concat(sampled, ignore_index=True)
+    else:
+        bundle_df = bundle_df.sample(min(sample_size, len(bundle_df)), random_state=42).reset_index(
+            drop=True
+        )
+
+    return bundle_df
