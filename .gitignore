@@ -1,0 +1,29 @@
+# Raw SHSAT data (downloaded from NYC DOE / InfoHub)
+data/raw/
+data/processed/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+
+# Course documents
+AGENTS.md
+docs/EAS510_SHSAT_PRD.md
+docs/project2_revised.md
+project2_revised.pdf
+
+# Task lists
+tasks/
+docs/roadmap.md
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
