@@ -7,4 +7,8 @@ This project uses public aggregate school-level data to investigate SHSAT partic
 ## What's Here
 
 - `docs/sources.md` — complete list of public data sources with download URLs, official links, local paths, and metadata for every dataset used in this project.
-- `requirements.txt` — project dependencies; version pinning follows clean Python 3.14 installation verification.
+- `requirements.txt` — pinned project runtime dependencies.
+
+## Environment
+
+Tested with Python 3.12.13 on macOS 26.6.2 (arm64).

@@ -1,7 +1,7 @@
-jupyterlab
-ipykernel
-pandas
-matplotlib
-seaborn
-openpyxl
-scikit-learn
+numpy==2.5.5
+scipy==1.18.1
+pandas==3.1.1
+matplotlib==3.11.2
+seaborn==0.13.2
+openpyxl==3.1.5
+scikit-learn==1.9.1
