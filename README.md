@@ -1,4 +1,4 @@
-# SHSAT Admissions Analysis
+# NYC Specialized High School Admissions Analysis
 
 Where do representation gaps emerge in NYC's SHSAT-based specialized-high-school admissions pipeline, how do they vary across schools, populations, and time, and to what extent are those patterns predictable?
 
