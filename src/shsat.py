@@ -1,8 +1,12 @@
 """Load SHSAT feeder-school outcome workbooks without altering raw values."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+from sklearn.metrics import average_precision_score
 
 
 FEEDER_SHEET = "Public Sending Offers_SUPP"
@@ -190,3 +194,96 @@ def build_sample_bundle(
         )
 
     return bundle_df
+
+
+def train_mean_baseline(
+    df: pd.DataFrame,
+    train_years: list[int],
+    eval_years: list[int],
+) -> dict:
+    """Evaluate a mean baseline for T1 (participation).
+
+    Computes the mean of T1 from the training folds and predicts that
+    constant value for all evaluation schools.  Returns MAE and RMSE
+    along with row counts and evaluation metadata.
+
+    Parameters
+    ----------
+    df : Full dataframe with T1 column already constructed.
+    train_years : List of admission years used for training.
+    eval_years : List of admission years used for evaluation.
+
+    Returns
+    -------
+    dict with keys: baseline, target, metrics, t1_mean,
+                    row_counts, evaluation_conditions
+    """
+    splits = split_data_by_year(df, train_years, eval_years)
+    train = splits["train"]
+    eval_df = splits["eval"]
+
+    t1_mean = float(train["T1"].mean())
+    t1_predictions = np.full(len(eval_df), t1_mean)
+
+    t1_values = eval_df["T1"].values.astype(float)
+
+    mae = float(np.mean(np.abs(t1_predictions - t1_values)))
+    rmse = float(np.sqrt(np.mean((t1_predictions - t1_values) ** 2)))
+
+    return {
+        "baseline": "mean",
+        "target": "T1",
+        "metrics": {"mae": mae, "rmse": rmse},
+        "t1_mean": t1_mean,
+        "row_counts": {"train": len(train), "eval": len(eval_df)},
+        "evaluation_conditions": {
+            "train_years": train_years,
+            "eval_years": eval_years,
+        },
+    }
+
+
+def train_prevalence_baseline(
+    df: pd.DataFrame,
+    train_years: list[int],
+    eval_years: list[int],
+) -> dict:
+    """Evaluate a prevalence baseline for T2 (high-offer).
+
+    Computes the prevalence of T2=1 from the training folds and
+    predicts that constant value for all evaluation schools.
+    Returns average precision and positive prevalence along with
+    row counts and evaluation metadata.
+
+    Parameters
+    ----------
+    df : Full dataframe with T2 column already constructed.
+    train_years : List of admission years used for training.
+    eval_years : List of admission years used for evaluation.
+
+    Returns
+    -------
+    dict with keys: baseline, target, metrics, t2_prevalence,
+                    row_counts, evaluation_conditions
+    """
+    splits = split_data_by_year(df, train_years, eval_years)
+    train = splits["train"]
+    eval_df = splits["eval"]
+
+    t2_prevalence = float(train["T2"].mean())
+    t2_predictions = np.full(len(eval_df), t2_prevalence)
+
+    ap = float(average_precision_score(eval_df["T2"], t2_predictions))
+    pos_prevalence = float(np.mean(t2_predictions))
+
+    return {
+        "baseline": "prevalence",
+        "target": "T2",
+        "metrics": {"ap": ap, "positive_prevalence": pos_prevalence},
+        "t2_prevalence": t2_prevalence,
+        "row_counts": {"train": len(train), "eval": len(eval_df)},
+        "evaluation_conditions": {
+            "train_years": train_years,
+            "eval_years": eval_years,
+        },
+    }
