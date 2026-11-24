@@ -102,10 +102,12 @@ def save_results(results: dict, output_dir: str | Path) -> None:
 
 def main() -> None:
     """Entry point: run baselines on real data and save results."""
-    data_dir = Path(__file__).resolve().parent / "data" / "raw" / "shsat"
+    data_dir = Path(__file__).resolve().parent / "data" / "sample"
     if not data_dir.exists():
-        print(f"Error: data directory not found at {data_dir}")
-        return
+        data_dir = Path(__file__).resolve().parent / "data" / "raw" / "shsat"
+        if not data_dir.exists():
+            print(f"Error: data directory not found at {data_dir}")
+            return
 
     results = run_pipeline(data_dir)
 
